@@ -16,17 +16,18 @@ from torchnet.meter import AUCMeter
 parser = argparse.ArgumentParser()
 parser.add_argument("--verbose", type=int, default=1, help="Verbose.")
 parser.add_argument("--seed", type=int, default=0, help="Random seed.")
-parser.add_argument("--loss_type", default="loss_ce")
-parser.add_argument("--device", default="cuda:0")
+parser.add_argument("--loss_type", default="loss_ips")
 parser.add_argument("--alpha", type=float, default=1e-3, help="Loss ratio.")
 parser.add_argument("--lr", type=float, default=0.05, help="Learning rate.")
+parser.add_argument("--log", type=str, default='results/tmp', help="log dir.")
 args = parser.parse_args()
 
 torch.manual_seed(0)
 torch.cuda.manual_seed(0)
+np.random.seed(0)
 
-filepath = "./"
-device = args.device
+filepath = "ml-1m/"
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 dataset = MovieLensDataset(filepath, device=device)
 
@@ -195,7 +196,7 @@ def generate_bandit_samples(logging_policy, syn, k=5):
 
 torch.manual_seed(0)
 torch.cuda.manual_seed(0)
-
+np.random.seed(0)
 u, a, p, r = generate_bandit_samples(
     logging_policy, syn,
     k=5)  # u: user, a: item, p: logging policy probability, r: reward/label
@@ -313,11 +314,13 @@ u = u[r > 0]
 a = a[r > 0]
 p = p[r > 0]
 
-batch_size = 128
+batch_size = 256
+#batch_size = 128
 check_metric = "Precision@10"
 
 torch.manual_seed(args.seed)
 torch.cuda.manual_seed(args.seed)
+np.random.seed(args.seed)
 
 nominator = Nominator().to(device)
 nominator.set_binary(False)
@@ -340,15 +343,19 @@ if args.loss_type == "loss_2s":
         ranker_logits = ranker(all_user_feats, all_item_feats,
                                all_impression_feats)
 
-for epoch in range(20):
+for epoch in range(100):
     print("---epoch {}---".format(epoch))
     for step in range(len(u) // batch_size):
-        item_ids = torch.LongTensor(
-            a[step * batch_size:(step + 1) * batch_size]).to(device)
-        item_probs = torch.FloatTensor(
-            p[step * batch_size:(step + 1) * batch_size]).to(device)
+        #item_ids = torch.LongTensor(
+        #    a[step * batch_size:(step + 1) * batch_size]).to(device)
+        #item_probs = torch.FloatTensor(
+        #    p[step * batch_size:(step + 1) * batch_size]).to(device)
 
-        user_ids = u[step * batch_size:(step + 1) * batch_size]
+        #user_ids = u[step * batch_size:(step + 1) * batch_size]
+        idx = np.random.randint(0, len(u), size=batch_size)
+        item_ids = torch.LongTensor(a[idx]).to(device)
+        item_probs = torch.FloatTensor(p[idx]).to(device)
+        user_ids = u[idx]
         user_feats = {
             key: value[user_ids]
             for key, value in syn.user_feats.items()
@@ -415,6 +422,4 @@ print("Best validation stage results\n 1 stage: {}\n 2 stage: {}".format(
 print("Best test results\n 1 stage: {}\n 2 stage: {}".format(
     test_results[best_epoch][0], test_results[best_epoch][1]))
 
-pickle.dump((best_epoch, val_results, test_results),
-            open("results/{}-a{}_{}.pkl".format(
-                args.loss_type.split("_")[1], args.alpha, args.seed), "wb"))
+np.save(args.log+"/metric.npy", (best_epoch, val_results, test_results))
